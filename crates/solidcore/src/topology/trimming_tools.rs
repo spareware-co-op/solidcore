@@ -73,6 +73,12 @@
 //!   `sRet = SM_ERR`) and a curve off the plane (`return SM_ERR` after all outputs are
 //!   set) are reported in [`OrderedLoops`] rather than as an error, so the outputs
 //!   upstream sets stay observable; [`OrderedLoops::status`] gives upstream's status.
+//!   Not upstream: its plane's normal (Newell's sum) and base point (the average of
+//!   the loop points) are summed about the first curve's start point, not in absolute
+//!   coordinates, so loops whose points all lie on a plane of constant x, y or z give
+//!   that plane exactly (upstream's terms carry the absolute coordinate, which
+//!   multiplies the rounding of the differences: the top cap of a cylinder of height 1
+//!   had a normal 2e-16 off its axis).
 //! - **`FindOuterLoops`** reorders index lists; the plane normal is `&mut` because the
 //!   point sequences unitize it in place (`SmPointSet3d` with `pOptNormal`). A failing
 //!   `Tessellate`, whose status upstream ignores, is returned.
@@ -1761,6 +1767,10 @@ pub fn order_curves_into_loops(k: &Kernel, curves: &[Curve], tol_3d: f64) -> Res
     let turn_normal = loops_turn_normal(k, curves, out.curves_box.sphere_bound().center)?;
 
     let mut plane_base_count: usize = 0;
+    // Not upstream: the point the plane's sums are taken about (Newell's normal does
+    // not depend on it for a closed loop), so a loop level in a coordinate gives each
+    // term of that coordinate exactly zero.
+    let reference = vertex_points.first().copied().unwrap_or(out.plane_point);
 
     // start-next-loop while block: find a curve not yet used in a loop
     while let Some(first) = seen.iter().position(|&s| !s) {
@@ -1896,8 +1906,8 @@ pub fn order_curves_into_loops(k: &Kernel, curves: &[Curve], tol_3d: f64) -> Res
         let mut loop_normal = Vec3::new(0.0, 0.0, 0.0);
         let mut jj = 0;
         while jj < loop_points.len() {
-            let p1 = at(&loop_points, jj)?;
-            let p2 = at(&loop_points, jj + 1)?;
+            let p1 = at(&loop_points, jj)? - reference;
+            let p2 = at(&loop_points, jj + 1)? - reference;
             loop_normal = Vec3::new(
                 loop_normal.x + (p1.y - p2.y) * (p1.z + p2.z),
                 loop_normal.y + (p1.z - p2.z) * (p1.x + p2.x),
@@ -1928,9 +1938,9 @@ pub fn order_curves_into_loops(k: &Kernel, curves: &[Curve], tol_3d: f64) -> Res
     // operator/(v, d): plain division (`/=` guards tiny divisors)
     let count = plane_base_count as f64;
     out.plane_point = Vec3::new(
-        out.plane_point.x / count,
-        out.plane_point.y / count,
-        out.plane_point.z / count,
+        reference.x + out.plane_point.x / count,
+        reference.y + out.plane_point.y / count,
+        reference.z + out.plane_point.z / count,
     );
 
     // Now we can create the plane from normal, basepoint, extents
