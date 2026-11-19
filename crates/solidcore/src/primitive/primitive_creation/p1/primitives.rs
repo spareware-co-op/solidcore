@@ -1169,7 +1169,22 @@ impl PrimitiveCreation {
                             &Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0),
                         )))
                     } else {
-                        None
+                        // Not upstream: a line swept along a direction not square to it is a
+                        // parallelogram, which upstream made a surface of extrusion (its record a
+                        // bilinear spline net, which the rounding of its far row can twist off the
+                        // plane, with spline edges). It is the planar face on the parallelogram's
+                        // four lines instead, as each cap is the planar face on its loop.
+                        let v = sweep_dir * distance;
+                        let (a, b) = (ends.start, ends.end);
+                        let mut sides = Vec::with_capacity(4);
+                        for (from, to) in [(a, b), (b, b + v), (b + v, a + v), (a + v, a)] {
+                            sides.push(Curve::from(Line::create_line_segment(3, from, to, None)?));
+                        }
+                        ignore_or_pass_on(
+                            planar_faces(k, brep, self.region(), &sides, brep.tolerance()),
+                            p,
+                        )?;
+                        continue;
                     }
                 } else if let Some((mut frame, radius, start, end)) = curve.is_arc(
                     k,
