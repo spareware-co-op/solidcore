@@ -73,12 +73,16 @@
 //!   `sRet = SM_ERR`) and a curve off the plane (`return SM_ERR` after all outputs are
 //!   set) are reported in [`OrderedLoops`] rather than as an error, so the outputs
 //!   upstream sets stay observable; [`OrderedLoops::status`] gives upstream's status.
-//!   Not upstream: its plane's normal (Newell's sum) and base point (the average of
-//!   the loop points) are summed about the first curve's start point, not in absolute
-//!   coordinates, so loops whose points all lie on a plane of constant x, y or z give
-//!   that plane exactly (upstream's terms carry the absolute coordinate, which
-//!   multiplies the rounding of the differences: the top cap of a cylinder of height 1
-//!   had a normal 2e-16 off its axis).
+//!   Not upstream: a loop whose segments close exactly has its plane's normal (Newell's
+//!   sum) summed about the first curve's start point, not in absolute coordinates, and
+//!   a coordinate every loop point shares is the base point's exactly, so loops whose
+//!   points all lie on a plane of constant x, y or z give that plane exactly (upstream's
+//!   terms carry the absolute coordinate, which multiplies the rounding of the
+//!   differences: the top cap of a cylinder of height 1 had a normal 2e-16 off its
+//!   axis; and the average of equal heights rounds). A closed loop's sum has the same
+//!   exact value about any point, so only its rounding changes; a loop that does not
+//!   close, whose sum depends on the point, and every other coordinate of the base point
+//!   (upstream's average) are upstream's.
 //! - **`FindOuterLoops`** reorders index lists; the plane normal is `&mut` because the
 //!   point sequences unitize it in place (`SmPointSet3d` with `pOptNormal`). A failing
 //!   `Tessellate`, whose status upstream ignores, is returned.
@@ -1690,6 +1694,25 @@ fn loops_turn_normal(k: &Kernel, curves: &[Curve], center: Point3) -> Result<Vec
     Ok(normal)
 }
 
+/// Not upstream: whether a loop's segments (`points` in pairs, a segment's start then its
+/// end) close exactly, each segment's end the next one's start and the last one's end the
+/// first one's start. Newell's sum over such a chain has the same exact value about any
+/// point; over a chain that does not close it depends on the point.
+fn segments_close(points: &[Point3]) -> bool {
+    let ends: Vec<(Point3, Point3)> = points
+        .chunks_exact(2)
+        .filter_map(|s| match s {
+            [a, b] => Some((*a, *b)),
+            _ => None,
+        })
+        .collect();
+    !ends.is_empty()
+        && ends
+            .iter()
+            .zip(ends.iter().cycle().skip(1))
+            .all(|(a, b)| a.1 == b.0)
+}
+
 /// `OrderCurvesIntoLoops`: orders `curves` into closed loops by matching their end
 /// points (within `max(tol_3d, radius/1000)` of the curves' bounding sphere), computes the
 /// plane through all loops (average loop point, unit normal from the loops' polygons)
@@ -1767,10 +1790,14 @@ pub fn order_curves_into_loops(k: &Kernel, curves: &[Curve], tol_3d: f64) -> Res
     let turn_normal = loops_turn_normal(k, curves, out.curves_box.sphere_bound().center)?;
 
     let mut plane_base_count: usize = 0;
-    // Not upstream: the point the plane's sums are taken about (Newell's normal does
-    // not depend on it for a closed loop), so a loop level in a coordinate gives each
-    // term of that coordinate exactly zero.
+    // Not upstream: the point a closed loop's Newell sum is taken about (its exact value
+    // does not depend on it), so a loop level in a coordinate gives each term of that
+    // coordinate exactly zero; and the coordinates every loop point shares, so far.
     let reference = vertex_points.first().copied().unwrap_or(out.plane_point);
+    let mut shared: [Option<f64>; 3] = match vertex_points.first() {
+        Some(p) => [Some(p.x), Some(p.y), Some(p.z)],
+        None => [None; 3],
+    };
 
     // start-next-loop while block: find a curve not yet used in a loop
     while let Some(first) = seen.iter().position(|&s| !s) {
@@ -1903,17 +1930,31 @@ pub fn order_curves_into_loops(k: &Kernel, curves: &[Curve], tol_3d: f64) -> Res
         out.loop_counts.push(loop_edges);
 
         // for every current-loop point pair - gather loop point sum and the normal sum
+        // Not upstream: Newell's sum is taken about `reference` when the loop's segments
+        // close exactly; a loop that does not close keeps upstream's sum about the origin
+        // (`segments_close`).
+        let about = if segments_close(&loop_points) {
+            reference
+        } else {
+            Point3::new(0.0, 0.0, 0.0)
+        };
         let mut loop_normal = Vec3::new(0.0, 0.0, 0.0);
         let mut jj = 0;
         while jj < loop_points.len() {
-            let p1 = at(&loop_points, jj)? - reference;
-            let p2 = at(&loop_points, jj + 1)? - reference;
+            let q1 = at(&loop_points, jj)?;
+            let p1 = q1 - about;
+            let p2 = at(&loop_points, jj + 1)? - about;
             loop_normal = Vec3::new(
                 loop_normal.x + (p1.y - p2.y) * (p1.z + p2.z),
                 loop_normal.y + (p1.z - p2.z) * (p1.x + p2.x),
                 loop_normal.z + (p1.x - p2.x) * (p1.y + p2.y),
             );
-            out.plane_point += p1;
+            out.plane_point += q1;
+            shared = [
+                shared[0].filter(|&v| v == q1.x),
+                shared[1].filter(|&v| v == q1.y),
+                shared[2].filter(|&v| v == q1.z),
+            ];
             plane_base_count += 1;
             jj += 2;
         }
@@ -1936,11 +1977,14 @@ pub fn order_curves_into_loops(k: &Kernel, curves: &[Curve], tol_3d: f64) -> Res
 
     // let the planeBase = Avg(All Plane Points)
     // operator/(v, d): plain division (`/=` guards tiny divisors)
+    // Not upstream: a coordinate every loop point shares is the base point's exactly (the
+    // average of equal numbers rounds otherwise: three times 0.1, divided by 3, is
+    // 0.10000000000000002); the others are upstream's average.
     let count = plane_base_count as f64;
     out.plane_point = Vec3::new(
-        reference.x + out.plane_point.x / count,
-        reference.y + out.plane_point.y / count,
-        reference.z + out.plane_point.z / count,
+        shared[0].unwrap_or(out.plane_point.x / count),
+        shared[1].unwrap_or(out.plane_point.y / count),
+        shared[2].unwrap_or(out.plane_point.z / count),
     );
 
     // Now we can create the plane from normal, basepoint, extents

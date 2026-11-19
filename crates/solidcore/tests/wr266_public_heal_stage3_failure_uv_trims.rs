@@ -13,7 +13,11 @@
 //! The measurement is through public APIs only: the public primitive `create_cylinder`,
 //! the public entry point `api_heal_brep`, and the public query `uv_trim_curve_pointer`.
 //! Status, entity counts, face, edge and vertex tolerances, the faces that keep a surface
-//! and the region void flags are SMLib's; only the UV trim curves differ.
+//! and the region void flags are SMLib's; only the UV trim curves differ. The void flags
+//! are compared as a set (sorted), not in region order: which of the three regions the
+//! heal of a body 1e-9 high lists first is decided by the rounding of its caps' planes,
+//! not by its shape (at the same commit of SMLib's port, the same cylinder moved to
+//! (10, 10, 10) lists its void region last), so the order is no property of the heal.
 
 #![allow(
     clippy::unwrap_used,
@@ -94,7 +98,11 @@ fn heal_flat_cylinder() -> Healed {
                 .map(|(_, v)| v.tolerance)
                 .collect::<Vec<_>>(),
         ),
-        region_is_void: b.regions().iter().map(|(_, r)| r.is_void()).collect(),
+        region_is_void: {
+            let mut voids: Vec<i32> = b.regions().iter().map(|(_, r)| r.is_void()).collect();
+            voids.sort_unstable();
+            voids
+        },
         uv_trim_curves: b
             .edgeuses()
             .iter()
@@ -127,7 +135,7 @@ fn wr266_public_heal_stage3_failure_does_not_quarantine_the_face() {
         faces_with_surface: 3,
         edge_tolerance_bits: vec![f64::to_bits(1e-5); 2],
         vertex_tolerance_bits: vec![f64::to_bits(1e-5)],
-        region_is_void: vec![1, 0, 0],
+        region_is_void: vec![0, 0, 1],
         uv_trim_curves: vec![false; 8],
     };
     assert_eq!(heal_flat_cylinder(), expected, "heal body changed");
