@@ -1086,11 +1086,9 @@ fn arc_sweep_cylinder(
         frame.z_axis(),
     );
     if against {
-        frame.rotate_about_axis_at_point(
-            180.0 * core::f64::consts::PI / 180.0,
-            frame.origin(),
-            frame.x_axis(),
-        );
+        // Not upstream: the half-turn exactly (upstream's turn by `180 * PI / 180`
+        // rounds the Y and Z axes and the origin).
+        frame.half_turn_about_x();
     }
     let Some(mut cylinder) = ignored(Cone::create_canonical_cylinder(k, &frame, radius))? else {
         return Ok(None);
@@ -1188,11 +1186,9 @@ impl PrimitiveCreation {
                         && distance * frame.z_axis().cross(sweep_dir).length() <= brep.tolerance()
                     {
                         if sweep_dir.dot(frame.z_axis()) < 0.0 {
-                            frame.rotate_about_axis_at_point(
-                                180.0 * core::f64::consts::PI / 180.0,
-                                frame.origin(),
-                                frame.x_axis(),
-                            );
+                            // Not upstream: the half-turn exactly (upstream's turn by
+                            // `180 * PI / 180` rounds the Y and Z axes and the origin).
+                            frame.half_turn_about_x();
                         }
                         if let Some(mut cylinder) =
                             ignored(Cone::create_canonical_cylinder(k, &frame, radius))?

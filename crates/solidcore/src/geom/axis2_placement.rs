@@ -27,6 +27,7 @@
 //! | [`Axis2Placement::translate`]                 | `Translate`                                           |
 //! | [`Axis2Placement::rotate_about_axis`]         | `RotateAboutAxis`                                     |
 //! | [`Axis2Placement::rotate_about_axis_at_point`] | `RotateAboutAxisAtPoint`                             |
+//! | [`Axis2Placement::half_turn_about_x`]         | (not upstream: `RotateAboutAxisAtPoint` by 180 degrees about the X axis at the origin, exactly) |
 //! | [`Axis2Placement::transform_point`]           | `TransformPoint`                                      |
 //! | [`Axis2Placement::transform_vector`]          | `TransformVector`                                     |
 //! | [`Axis2Placement::transform_axis2_placement`] | `TransformAxis2Placement`                             |
@@ -358,6 +359,17 @@ impl Axis2Placement {
         self.translate(-center);
         self.rotate_about_axis(angle_radians, axis);
         self.translate(center);
+    }
+
+    /// Turn this placement a half-turn about its own X axis through its origin: the
+    /// origin and X axis stay, and the Y and Z axes are negated, exactly. Not upstream:
+    /// upstream turns by `180 * PI / 180` radians through
+    /// [`Axis2Placement::rotate_about_axis_at_point`], whose binary64 sine of that angle
+    /// is about 1.2e-16, not 0, so its Y and Z axes and its origin come out rounded off
+    /// the exact half-turn.
+    pub fn half_turn_about_x(&mut self) {
+        // Z is X x Y, so negating Y negates Z.
+        self.y_axis = -self.y_axis;
     }
 
     /// Map a local point to global coordinates, `origin + u·X + v·Y + w·Z`
