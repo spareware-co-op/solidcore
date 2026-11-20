@@ -1176,12 +1176,21 @@ impl PrimitiveCreation {
                         // four lines instead, as each cap is the planar face on its loop.
                         let v = sweep_dir * distance;
                         let (a, b) = (ends.start, ends.end);
-                        let mut sides = Vec::with_capacity(4);
-                        for (from, to) in [(a, b), (b, b + v), (b + v, a + v), (a + v, a)] {
-                            sides.push(Curve::from(Line::create_line_segment(3, from, to, None)?));
-                        }
+                        // By a zero distance the sides from b and back to a have no length and
+                        // their lines fail: the side is dropped as the square line's plane of
+                        // no height is (its status ignored as upstream ignores that face's, or
+                        // passed on with the fix), not returned.
+                        let sides: Result<Vec<Curve>> =
+                            [(a, b), (b, b + v), (b + v, a + v), (a + v, a)]
+                                .into_iter()
+                                .map(|(from, to)| {
+                                    Line::create_line_segment(3, from, to, None).map(Curve::from)
+                                })
+                                .collect();
                         ignore_or_pass_on(
-                            planar_faces(k, brep, self.region(), &sides, brep.tolerance()),
+                            sides.and_then(|sides| {
+                                planar_faces(k, brep, self.region(), &sides, brep.tolerance())
+                            }),
                             p,
                         )?;
                         continue;

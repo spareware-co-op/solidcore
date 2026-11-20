@@ -8,7 +8,8 @@
 //! sweep, exactly. (A line segment keeps its start, unit direction and length, so its end
 //! is evaluated: the segment from (1, 0, 0) to (0, 1, 0) ends at (-2.2e-16, 1.0000000000000002,
 //! 0), on a sweep square to it too. The corners are compared with the ends as the lines give
-//! them.)
+//! them.) A sweep by zero sweeps no area: the oblique line's parallelogram then has two sides
+//! of no length and is dropped, as the square line's plane of no height is.
 
 #![allow(
     clippy::unwrap_used,
@@ -162,6 +163,56 @@ fn a_tilted_prism_swept_along_an_axis_has_plane_sides_on_its_exact_corners() {
         assert!(
             seen.iter().any(|p| same(p, &c)),
             "tilted by +z: no vertex exactly at {c:?} in {seen:?}"
+        );
+    }
+}
+
+/// The line from the origin to `end` swept `distance` along +z, capped or not, with the
+/// sweep statuses passed on or not.
+fn line_swept(end: Vec3, distance: f64, cap: bool, pass_on: bool) -> solidcore::Result<Brep> {
+    let mut k = Kernel::default();
+    k.fixes.sweep_statuses_pass_on = pass_on;
+    let line = seg(Vec3::ZERO, end);
+    create_linear_sweep(&mut k, &[Some(&line)], Vec3::Z, distance, cap)
+}
+
+/// The square line (0, 0, 0) to (1, 0, 0) and the oblique line (0, 0, 0) to (1, 0, 1).
+fn lines() -> [(&'static str, Vec3); 2] {
+    [
+        ("square", Vec3::new(1.0, 0.0, 0.0)),
+        ("oblique", Vec3::new(1.0, 0.0, 1.0)),
+    ]
+}
+
+#[test]
+fn a_line_swept_obliquely_by_zero_has_no_side_as_a_square_line_has_none() {
+    // a zero distance sweeps no area: the square line's plane of no height fails and is
+    // dropped as upstream drops it, so the sweep succeeds with no face; the oblique line's
+    // parallelogram, whose sides from its end and back to its start have no length, is
+    // dropped the same; a single open line takes no caps, so caps change nothing
+    for cap in [false, true] {
+        for (name, end) in lines() {
+            let b = line_swept(end, 0.0, cap, false)
+                .unwrap_or_else(|e| panic!("{name} line by 0, caps {cap}: {e:?}"));
+            let counts = (
+                b.face_list().len(),
+                b.edge_list().len(),
+                b.vertex_list().len(),
+            );
+            assert_eq!(counts, (0, 0, 0), "{name} line by 0, caps {cap}");
+        }
+    }
+}
+
+#[test]
+fn a_line_swept_obliquely_by_zero_passes_its_status_on_as_a_square_line_does() {
+    // with the sweep statuses passed on, the dropped side's failure is the sweep's, for
+    // the oblique line as for the square one
+    for (name, end) in lines() {
+        let got = line_swept(end, 0.0, false, true);
+        assert!(
+            got.is_err(),
+            "{name} line by 0, statuses passed on: no error"
         );
     }
 }
